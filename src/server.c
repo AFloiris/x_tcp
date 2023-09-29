@@ -37,12 +37,6 @@ void*           heartbeat_thread(sock_node* node);
 
 int main()
 {
-    printf("__BIGGEST_ALIGNMENT__ = %zu\n", __BIGGEST_ALIGNMENT__);
-    printf("__alignof__(char) = %zu\n", __alignof__(char));
-    printf("__alignof__(int) = %zu\n", __alignof__(int));
-    printf("__alignof__(double) = %zu\n", __alignof__(double));
-    printf("__alignof__(sock_node) = %zu\n", __alignof__(sock_node));
-
     /* 创建 x_sock 并且绑定监听 */
     x_sock* sock = x_socket();
     x_bind(sock, SERVER_IP, SERVER_PORT);
