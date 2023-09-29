@@ -5,6 +5,7 @@ BUILD_DIR = ./build
 CC=gcc
 # -Wall -Wextra 
 FLAGS = -pthread -g -I$(INC_DIR)
+# FLAGS += -DTCP_DEBUG
 OBJS = $(BUILD_DIR)/x_packet.o $(BUILD_DIR)/x_tcp.o 
 
 default:all

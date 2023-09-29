@@ -73,7 +73,7 @@
 #define DEFAULT_HEADER_SIZE (DEFAULT_IP_HEADER_SIZE + DEFAULT_TCP_HEADER_SIZE)
 
 /* TCP用到的各种数据 */
-typedef struct x_tcp x_tcp;
+typedef struct x_sock x_sock;
 /* tcp 通信的数据包 */
 typedef struct x_packet x_packet;
 /* 队列结点的结构体定义 */
@@ -88,38 +88,39 @@ typedef struct x_send_window x_send_window;
 typedef struct x_recv_window x_recv_window;
 /* 定时器相关 */
 typedef struct x_time x_time;
-x_tcp                *x_socket();
-int                   x_bind(x_tcp *sock, char *ip, uint16_t port);
-int                   x_listen(x_tcp *sock);
-x_tcp                *x_accept(x_tcp *sock);
-int                  *x_connect(x_tcp *sock, char *local_ip, int local_port, char *remote_ip, int remote_port);
-int                   x_close(x_tcp *sock);
-int                   x_read(x_tcp *sock, void *buf, int len);
-int                   x_write(x_tcp *sock, const void *data, int len);
-int                   x_close(x_tcp *sock);
+x_sock               *x_socket();
+int                   x_bind(x_sock *sock, char *ip, uint16_t port);
+int                   x_listen(x_sock *sock);
+x_sock               *x_accept(x_sock *sock);
+int                  *x_connect(x_sock *sock, char *local_ip, int local_port, char *remote_ip, int remote_port);
+int                   x_close(x_sock *sock);
+int                   x_read(x_sock *sock, void *buf, int len);
+int                   x_write(x_sock *sock, const void *data, int len);
+int                   x_close(x_sock *sock);
 
-static int data_to_buffer(x_tcp *sock, const char *buf, int len);
+static int data_to_buffer(x_sock *sock, const char *buf, int len);
 
-static void *recv_thread(x_tcp *sock);
-static void *send_thread(x_tcp *sock);
-static void *retran_thread(x_tcp *sock);
+static void *recv_thread(x_sock *sock);
+static void *send_thread(x_sock *sock);
+static void *retran_thread(x_sock *sock);
 
-static void      packet_handle(x_tcp *sock, char *packet);
-static x_packet *packet_create(x_tcp *sock, uint32_t seq, uint32_t ack_seq, uint16_t flags, uint16_t window_size, char *data, int len);
-static int       packet_send(x_tcp *sock, x_packet *packet, int len);
+static void      packet_handle(x_sock *sock, char *packet);
+static x_packet *packet_create(x_sock *sock, uint32_t seq, uint32_t ack_seq, uint16_t flags, uint16_t window_size, char *data, int len);
+static int       packet_send(x_sock *sock, x_packet *packet, int len);
 
 static void timeout_handler(union sigval sv);
-static void startTimer(x_tcp *sock);
-static void stopTimer(x_tcp *sock);
-static void TimeoutInterval(x_tcp *sock);
+static void startTimer(x_sock *sock);
+static void stopTimer(x_sock *sock);
+static void TimeoutInterval(x_sock *sock);
 
 static x_sock_queue *createQueue();
-static x_sock_node  *newNode(x_tcp *sock);
-static void          enQueue(x_sock_queue *q, x_tcp *sock);
-static x_tcp        *deQueue(x_sock_queue *q);
+static x_sock_node  *newNode(x_sock *sock);
+static void          enQueue(x_sock_queue *q, x_sock *sock);
+static x_sock       *deQueue(x_sock_queue *q);
 
-static int    cal_hash(uint32_t remote_ip, uint16_t remote_port);
-static x_tcp *tcp_create();
+static int     cal_hash(uint32_t remote_ip, uint16_t remote_port);
+static x_sock *sock_create();
+static void    sock_delete(x_sock *sock);
 
 /* 保存地址端口 */
 struct x_sockaddr {
@@ -129,7 +130,7 @@ struct x_sockaddr {
 
 /* 队列结点的结构体定义 */
 struct x_sock_node {
-    x_tcp       *sock;  // 数据域 存放的是socket
+    x_sock      *sock;  // 数据域 存放的是socket
     x_sock_node *next;  // 指向队列的下一个节点
 };
 
@@ -178,7 +179,7 @@ struct x_time {
 /**
  * TCP用到的各种数据
  */
-struct x_tcp {
+struct x_sock {
     int state;      // tcp的状态
     int socket_fd;  // 连接所用的socket
 

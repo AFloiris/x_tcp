@@ -8,12 +8,12 @@
 #define HEARTBEAT_TIME 5
 
 /**
- * 保存已连接的 x_tcp 的各个信息的节点
+ * 保存已连接的 x_sock 的各个信息的节点
  */
 typedef struct sock_node sock_node;
 struct sock_node {
     pthread_t         recv_pt, heartbeat_pt;
-    x_tcp*            sock;
+    x_sock*           sock;
     char*             ip;
     struct itimerspec its;
     sock_node *       prev, *next;
@@ -29,7 +29,7 @@ struct sock_node_list {
 }* conn_list;
 
 void*           read_thread(sock_node* node);
-sock_node*      sock_node_create(x_tcp* sock);
+sock_node*      sock_node_create(x_sock* sock);
 sock_node_list* sock_node_list_init();
 int             sock_node_list_add(sock_node_list* list, sock_node* node);
 int             sock_node_list_remove(sock_node_list* list, sock_node* node);
@@ -37,23 +37,29 @@ void*           heartbeat_thread(sock_node* node);
 
 int main()
 {
-    /* 创建 x_tcp 并且绑定监听 */
-    x_tcp* sock = x_socket();
+    printf("__BIGGEST_ALIGNMENT__ = %zu\n", __BIGGEST_ALIGNMENT__);
+    printf("__alignof__(char) = %zu\n", __alignof__(char));
+    printf("__alignof__(int) = %zu\n", __alignof__(int));
+    printf("__alignof__(double) = %zu\n", __alignof__(double));
+    printf("__alignof__(sock_node) = %zu\n", __alignof__(sock_node));
+
+    /* 创建 x_sock 并且绑定监听 */
+    x_sock* sock = x_socket();
     x_bind(sock, SERVER_IP, SERVER_PORT);
     x_listen(sock);
-    /* 初始化已连接 x_tcp 全局链表 */
+    /* 初始化已连接 x_sock 全局链表 */
     conn_list = sock_node_list_init();
     printf("开启服务器\n");
     /* 循环阻塞等待客户端连接 */
     while (1) {
         /* 有客户端连接 */
-        x_tcp*     conn_sock = x_accept(sock);
+        x_sock*    conn_sock = x_accept(sock);
         sock_node* node      = sock_node_create(conn_sock);
         sock_node_list_add(conn_list, node);
         printf("有客户端连接  %s : %d\n", node->ip, conn_sock->remote_addr.port);
         /* 创建读取数据线程与心跳线程 */
         pthread_create(&node->recv_pt, NULL, (void*)read_thread, node);
-        pthread_create(&node->heartbeat_pt, NULL, (void *)heartbeat_thread, node);
+        pthread_create(&node->heartbeat_pt, NULL, (void*)heartbeat_thread, node);
     }
 }
 
@@ -67,7 +73,7 @@ int main()
  * @note
  * 持续读取数据
  * 判断是否为心跳数据
- * 将所有数据转发给已连接的 x_tcp
+ * 将所有数据转发给已连接的 x_sock
  */
 void* read_thread(sock_node* node)
 {
@@ -88,6 +94,7 @@ void* read_thread(sock_node* node)
                 pthread_cancel(node->heartbeat_pt);
                 printf("[%s:%d]客户端退出\n", node->ip, node->sock->remote_addr.port);
                 sock_node_list_remove(conn_list, node);
+                node = NULL;
                 pthread_exit(NULL);
             }
             /* 将消息格式化至 msg */
@@ -111,7 +118,7 @@ void* read_thread(sock_node* node)
  * @return  无
  *
  * @note
- * 发送心跳包,如果没有回复,则删除该 x_tcp
+ * 发送心跳包,如果没有回复,则删除该 x_sock
  */
 void* heartbeat_thread(sock_node* node)
 {
@@ -120,6 +127,8 @@ void* heartbeat_thread(sock_node* node)
         if (node != NULL) {
             x_write(node->sock, HEARTBEAT_MASK, sizeof(HEARTBEAT_MASK));
             sleep(HEARTBEAT_TIME);
+            if (node->is_heartbeat_normal == -1) {
+            }
             if (node->is_heartbeat_normal) {
                 printf("[%s : %d] 心跳正常\n", node->ip, node->sock->remote_addr.port);
                 node->is_heartbeat_normal = 0;
@@ -137,18 +146,16 @@ void* heartbeat_thread(sock_node* node)
 /**
  * @brief   创建 sock_node
  *
- * @param   sock    需要保存的 x_tcp
+ * @param   sock    需要保存的 x_sock
  *
  * @return  初始化的sock_node
  *
  * @note    分配内存,初始化数据,创建节点
  */
-sock_node* sock_node_create(x_tcp* sock)
+sock_node* sock_node_create(x_sock* sock)
 {
     /* 分配内存 */
-    sock_node* node = (sock_node*)malloc(sizeof(sock_node));
-    memset(node, 0, sizeof(sock_node));
-
+    sock_node* node = (sock_node*)calloc(1, sizeof(sock_node));
     /* 初始化 */
     node->sock = sock;
     struct in_addr addr;
@@ -168,8 +175,7 @@ sock_node* sock_node_create(x_tcp* sock)
  */
 sock_node_list* sock_node_list_init()
 {
-    sock_node_list* list = (sock_node_list*)malloc(sizeof(sock_node_list));
-    memset(list, 0, sizeof(sock_node_list));
+    sock_node_list* list = (sock_node_list*)calloc(1, sizeof(sock_node_list));
 
     list->size  = 0;
     list->front = NULL;
@@ -223,7 +229,7 @@ int sock_node_list_add(sock_node_list* list, sock_node* node)
 int sock_node_list_remove(sock_node_list* list, sock_node* node)
 {
     /* 无效数据 */
-    if (node == NULL || list->size == 0) {
+    if (node == NULL || list == NULL || list->size == 0) {
         return -1;
     }
 
@@ -252,9 +258,13 @@ int sock_node_list_remove(sock_node_list* list, sock_node* node)
                 prev->next = next;
                 next->prev = prev;
             }
-            memset(cur, 0, sizeof(sock_node));
+            pthread_cancel(cur->recv_pt);
+            pthread_cancel(cur->heartbeat_pt);
             free(cur);
+            // memset(cur,0,sizeof(sock_node));      //tcache_thread_shutdown(): unaligned tcache chunk detected
+            cur = NULL;
             list->size--;
+
             pthread_mutex_unlock(&list->lock);
             return list->size;
         } else {

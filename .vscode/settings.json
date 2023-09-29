@@ -1,0 +1,14 @@
+{
+    "C_Cpp.default.compilerPath": "/usr/bin/clang",
+    "files.associations": {
+        "x_sock.h": "c",
+        "in.h": "c",
+        "filter.h": "c",
+        "inet.h": "c",
+        "tcp.h": "c",
+        "pthread.h": "c",
+        "x_tcp.h": "c",
+        "stdio.h": "c",
+        "unistd.h": "c"
+    }
+}

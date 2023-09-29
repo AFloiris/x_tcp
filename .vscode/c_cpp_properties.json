@@ -11,7 +11,6 @@
                 "__GNUC__",
                 "_DEFAULT_SOURCE"
             ],
-            "compilerPath": "/usr/bin/clang",
             "cStandard": "c11",
             "cppStandard": "c++11",
             "intelliSenseMode": "linux-clang-x64"

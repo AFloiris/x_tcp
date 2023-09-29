@@ -10,27 +10,26 @@
 /* 本次连接所使用的socket_fd */
 int TCP_SOCKET = -1;
 /* 服务端运行中,以确认建立连接的sock列表 */
-x_tcp *established_sock[MAX_SOCK];
+x_sock *established_sock[MAX_SOCK];
 /* 服务端运行中,以确认建立连接的sock列表的hash表 */
 char ehash[MAX_SOCK] = {0};
-
 /**
- * @brief   创建一个 x_tcp 结构体用于 tcp 通信
+ * @brief   创建一个 x_sock 结构体用于 tcp 通信
  *
  * @param   无
  *
- * @return  初始化的 x_tcp 结构体指针
+ * @return  初始化的 x_sock 结构体指针
  *
  * @note
- * 1. 初始化一个 x_tcp 结构体
+ * 1. 初始化一个 x_sock 结构体
  * 2. 初始化连接表
  * 3. 创建一个接收 tcp 原始数据包的 socket
  */
-x_tcp *x_socket()
+x_sock *x_socket()
 {
     /* 初始化结构体 */
-    x_tcp *sock = tcp_create();
-    sock->state = CLOSED;
+    x_sock *sock = sock_create();
+    sock->state  = CLOSED;
 
     /* 初始化已连接表 */
     for (int i = 0; i < MAX_SOCK; i++) {
@@ -54,20 +53,20 @@ x_tcp *x_socket()
 /**
  * @brief       绑定需要监听的地址(ip:port)
  *
- * @param sock  用于绑定的 x_tcp
+ * @param sock  用于绑定的 x_sock
  * @param ip    字符串形式的需要监听的 ip
  * @param port  需要监听的端口
  *
  * @return      0成功其他失败
  *
  * @note
- * 1. 将地址绑定至 x_tcp 中
+ * 1. 将地址绑定至 x_sock 中
  * 2. 使用 BPF 过滤器,过滤为只接受目标地址是监听的地址,实现监听指定地址
  */
-int x_bind(x_tcp *sock, char *ip, uint16_t port)
+int x_bind(x_sock *sock, char *ip, uint16_t port)
 {
     int ret;
-    /* 将地址绑定在 x_tcp 中 */
+    /* 将地址绑定在 x_sock 中 */
     inet_pton(AF_INET, ip, &sock->local_addr.ip);
     sock->local_addr.ip   = ntohl(sock->local_addr.ip);
     sock->local_addr.port = port;
@@ -96,15 +95,15 @@ int x_bind(x_tcp *sock, char *ip, uint16_t port)
 /**
  * @brief 进入监听的状态
  *
- * @param sock 用于监听的 x_tcp
+ * @param sock 用于监听的 x_sock
  *
  * @return 0成功, 其他失败
  *
  * @note
- * 1. 修改 x_tcp 状态
+ * 1. 修改 x_sock 状态
  * 2. 创建一个线程在后台持续接收并处理数据
  */
-int x_listen(x_tcp *sock)
+int x_listen(x_sock *sock)
 {
     int ret;
     /* 状态修改为监听 */
@@ -117,7 +116,7 @@ int x_listen(x_tcp *sock)
 /**
  * @brief 客户端连接服务端
  *
- * @param sock 需要连接的 x_tcp
+ * @param sock 需要连接的 x_sock
  * @param local_ip 字符串形式的本机 ip
  * @param local_port 用于通信的本机端口
  * @param remote_ip  字符串形式的服务器 ip
@@ -126,15 +125,15 @@ int x_listen(x_tcp *sock)
  * @return 0成功, 其他失败
  *
  * @note
- * 1. 绑定地址信息至 x_tcp
+ * 1. 绑定地址信息至 x_sock
  * 2. 利用BPF过滤,只接受连接的服务端的数据
  * 3. 建一个线程在后台持续接收并处理数据
  * 4. 开始三次握手阶段,发送 seq 包
  * 5. 等待后台线程处理 seq_ack 包 并发送 ack 包后,完成三次握手
- * 6. 将连接成功 x_tcp 放入已连接表中
+ * 6. 将连接成功 x_sock 放入已连接表中
  * 7. 开启发送线程与重传线程
  */
-int *x_connect(x_tcp *sock, char *local_ip, int local_port, char *remote_ip, int remote_port)
+int *x_connect(x_sock *sock, char *local_ip, int local_port, char *remote_ip, int remote_port)
 {
     /* 绑定本机地址与远程地址 */
     inet_pton(AF_INET, local_ip, &sock->local_addr.ip);
@@ -169,7 +168,7 @@ int *x_connect(x_tcp *sock, char *local_ip, int local_port, char *remote_ip, int
 
     /* 发送SYN包 */
 
-#ifdef TCP_DEBUG
+#ifdef DEBUG
     printf("发送第一次握手 SYN 包\n");
 #endif
 
@@ -181,7 +180,7 @@ int *x_connect(x_tcp *sock, char *local_ip, int local_port, char *remote_ip, int
     while (sock->state != ESTABLISHED) {
     };
 
-    /* 将连接成功的 x_tcp 放入 连接表中 */
+    /* 将连接成功的 x_sock 放入 连接表中 */
     int hashval;
     hashval                   = cal_hash(sock->remote_addr.ip, sock->remote_addr.port);
     ehash[hashval]            = 1;
@@ -191,7 +190,7 @@ int *x_connect(x_tcp *sock, char *local_ip, int local_port, char *remote_ip, int
     pthread_create(&sock->send_pt, NULL, (void *)send_thread, sock);
     pthread_create(&sock->retran_pt, NULL, (void *)retran_thread, sock);
 
-#ifdef TCP_DEBUG
+#ifdef DEBUG
     printf("连接成功 \n");
 #endif
 
@@ -201,23 +200,23 @@ int *x_connect(x_tcp *sock, char *local_ip, int local_port, char *remote_ip, int
 /**
  * @brief 接收并返回连接成功的客户端
  *
- * @param sock 需要被连接的 x_tcp, 即服务端 x_tcp
+ * @param sock 需要被连接的 x_sock, 即服务端 x_sock
  *
- * @return x_tcp 连接成功的客户端 x_tcp
+ * @return x_sock 连接成功的客户端 x_sock
  *
  * @note
  * 1. 等待查询服务端的已连接队列中,是否有已连接的客户端
  * 2. 将已连接的客户端保存在全局已连接表中
  * 3. 开启发送线程与重传线程
  */
-x_tcp *x_accept(x_tcp *sock)
+x_sock *x_accept(x_sock *sock)
 {
     /* 等待查询已连接队列 */
     while (!sock->complete_conn_queue->queue_size) {
     };
 
     /* 出列 */
-    x_tcp *conn_sock = deQueue(sock->complete_conn_queue);
+    x_sock *conn_sock = deQueue(sock->complete_conn_queue);
 
     /* 保存在已连接的hash表中 */
     int hashval;
@@ -229,7 +228,7 @@ x_tcp *x_accept(x_tcp *sock)
     pthread_create(&conn_sock->send_pt, NULL, (void *)send_thread, conn_sock);
     pthread_create(&conn_sock->retran_pt, NULL, (void *)retran_thread, conn_sock);
 
-#ifdef TCP_DEBUG
+#ifdef DEBUG
     printf("连接成功\n");
 #endif
 
@@ -239,18 +238,18 @@ x_tcp *x_accept(x_tcp *sock)
 /**
  * @brief 写操作函数
  *
- * @param sock 需要发送数据的 x_tcp
+ * @param sock 需要发送数据的 x_sock
  * @param data 需要发送的数据
  * @param len 需要发送的数据长度
  *
  * @return 正数:成功写入的长度; 其他:错误
  *
  * @note
- * 调用 data_to_buffer 将数据写入到 x_tcp 发送缓冲区中
+ * 调用 data_to_buffer 将数据写入到 x_sock 发送缓冲区中
  */
-int x_write(x_tcp *sock, const void *data, int len)
+int x_write(x_sock *sock, const void *data, int len)
 {
-    char *buf = (char *)malloc(len);
+    char *buf = (char *)calloc(1,len);
     memcpy(buf, data, len);
     return data_to_buffer(sock, buf, len);
 }
@@ -258,7 +257,7 @@ int x_write(x_tcp *sock, const void *data, int len)
 /**
  * @brief   读操作函数
  *
- * @param sock  需要读取数据的 x_tcp
+ * @param sock  需要读取数据的 x_sock
  * @param buf   读取数据的缓冲区指针
  * @param len   需要读取的数据长度
  *
@@ -268,7 +267,7 @@ int x_write(x_tcp *sock, const void *data, int len)
  * 1. 阻塞等待缓冲区有数据
  * 2. 读取指定长度数据,并删除指定长度缓冲区数据
  */
-int x_read(x_tcp *sock, void *buf, int len)
+int x_read(x_sock *sock, void *buf, int len)
 {
     /* 等待缓冲区有数据 */
     while (sock->received_len <= 0)
@@ -290,7 +289,7 @@ int x_read(x_tcp *sock, void *buf, int len)
 
     /* 如果还有剩余数据,将剩下的重新分配内存保存 */
     if (read_len < sock->received_len) {
-        char *new_buf = malloc(sock->received_len - read_len);
+        char *new_buf = calloc(1,sock->received_len - read_len);
         memcpy(new_buf, sock->received_buf + read_len, sock->received_len - read_len);
         free(sock->received_buf);
         sock->received_len -= read_len;
@@ -307,17 +306,17 @@ int x_read(x_tcp *sock, void *buf, int len)
 /**
  * @brief 关闭 tcp 连接
  *
- * @param sock 需要关闭连接的 x_tcp
+ * @param sock 需要关闭连接的 x_sock
  *
  * @return 0: 成功 | 其他: 错误
  *
  * @note
  * 1. 发送第一次挥手的 fin 包,接下来在后台读取线程完成剩下3次挥手
- * 2. 释放 x_tcp
+ * 2. 释放 x_sock
  *
  * @todo 增加服务端的close
  */
-int x_close(x_tcp *sock)
+int x_close(x_sock *sock)
 {
     while (sock->send_len != 0) {
     };
@@ -325,7 +324,7 @@ int x_close(x_tcp *sock)
         uint32_t  seq    = sock->window.wnd_send->nextseq;
         x_packet *packet = packet_create(sock, seq, 0, FIN, 1, NULL, 0);
 
-#ifdef TCP_DEBUG
+#ifdef DEBUG
         printf("发送第一次挥手 FIN 包\n");
 #endif
 
@@ -335,10 +334,9 @@ int x_close(x_tcp *sock)
     /* 等待四次挥手完成 */
     while (sock->state != CLOSED) {
     };
-    memset(sock, 0, sizeof(x_tcp));
-    free(sock);
-
-#ifdef TCP_DEBUG
+    //sock_delete(sock);
+    sock = NULL;
+#ifdef DEBUG
     printf("关闭连接\n");
 #endif
 
@@ -348,20 +346,20 @@ int x_close(x_tcp *sock)
 /**
  * @brief   将用户需要发送的数据放入sock缓冲区
  *
- * @param   sock    需要放入数据的 x_tcp
+ * @param   sock    需要放入数据的 x_sock
  * @param   buf     需要放入的数据
  * @param   len     需要放入的数据长度
  *
  * @return  正数: 实际放入的数据的长度  |   其他: 错误
  *
  */
-static int data_to_buffer(x_tcp *sock, const char *buf, int len)
+static int data_to_buffer(x_sock *sock, const char *buf, int len)
 {
     int print = 1;
     /* 查询缓冲区大小 */
     while (MAX_TCP_BUF - sock->send_len < len) {
         if (print) {
-#ifdef TCP_DEBUG
+#ifdef DEBUG
             printf("缓冲区已满,阻塞等待...\n");
 #endif
 
@@ -373,7 +371,7 @@ static int data_to_buffer(x_tcp *sock, const char *buf, int len)
         ;
     /* 如果缓冲区为空,则直接分配 */
     if (sock->send_buf == NULL) {
-        sock->send_buf = malloc(len);
+        sock->send_buf = calloc(1,len);
     }
     /* 不为空,则重新分配内存,添加数据 */
     else {
@@ -388,15 +386,15 @@ static int data_to_buffer(x_tcp *sock, const char *buf, int len)
 /**
  * @brief   后台数据读取线程函数
  *
- * @param   sock    需要读取数据的 x_tcp
+ * @param   sock    需要读取数据的 x_sock
  *
  * @return  无
  *
  * @note
  * 1. 持续读取数据
- * 2. 通过数据包中的源 ip 和源 port 计算 hash,判断是否是已连接的 x_tcp
+ * 2. 通过数据包中的源 ip 和源 port 计算 hash,判断是否是已连接的 x_sock
  */
-static void *recv_thread(x_tcp *sock)
+static void *recv_thread(x_sock *sock)
 {
     char     buf[DEFAULT_HEADER_SIZE + MAX_DATA_SIZE];
     uint32_t remote_ip;
@@ -422,7 +420,7 @@ static void *recv_thread(x_tcp *sock)
 /**
  * @brief   数据包处理函数
  *
- * @param   sock    需要数据包处理的 x_tcp
+ * @param   sock    需要数据包处理的 x_sock
  * @param   packet  需要处理的数据包
  *
  * @note
@@ -430,24 +428,23 @@ static void *recv_thread(x_tcp *sock)
  * 2. 通过 flags 判断当前数据包的处理方式
  * 3. 通过 ack_seq 判断当前数据包是否正确
  */
-static void packet_handle(x_tcp *sock, char *packet)
+static void packet_handle(x_sock *sock, char *packet)
 {
     /* 获取包中属性 */
     uint8_t  pkt_flags   = get_tcp_flags(packet + DEFAULT_IP_HEADER_SIZE);
     uint32_t pkt_seq     = get_tcp_seq(packet + DEFAULT_IP_HEADER_SIZE);
     uint32_t pkt_ack_seq = get_tcp_ack_seq(packet + DEFAULT_IP_HEADER_SIZE);
-
     /* 如果是 LISTEN 状态(服务端) */
     if (sock->state == LISTEN) {
         /* 接收到第一次握手的 syn 包,发送 syn_ack 包 */
         if (pkt_flags == SYN) {
-#ifdef TCP_DEBUG
+#ifdef DEBUG
             printf("收到第一次握手 syn 包\n");
 #endif
 
-            x_tcp *conn_sock = tcp_create();
+            x_sock *conn_sock = sock_create();
 
-            /* 将连接 x_tcp 的状态改为 SYN_RECV 并存入 LISTEN 状态的 x_tcp (服务端)的半连接队列中 */
+            /* 将连接 x_sock 的状态改为 SYN_RECV 并存入 LISTEN 状态的 x_sock (服务端)的半连接队列中 */
             conn_sock->state            = SYN_RECV;
             conn_sock->local_addr.ip    = sock->local_addr.ip;
             conn_sock->local_addr.port  = sock->local_addr.port;
@@ -460,7 +457,7 @@ static void packet_handle(x_tcp *sock, char *packet)
             uint32_t  ack_seq        = get_tcp_seq(packet + DEFAULT_IP_HEADER_SIZE) + 1;
             x_packet *syn_ack_packet = packet_create(conn_sock, seq, ack_seq, SYN | ACK, 1, NULL, 0);
 
-#ifdef TCP_DEBUG
+#ifdef DEBUG
             printf("发送第二次握手 syn_ack 包\n");
 #endif
 
@@ -470,16 +467,16 @@ static void packet_handle(x_tcp *sock, char *packet)
         /* 接收到第三次握手的 ack 包,确认连接 */
         if (pkt_flags == ACK) {
             if (pkt_ack_seq == SERVER_CONN_SEQ + 1) {
-/* 三次握手成功,将其 x_tcp 放入已连接队列 */
-#ifdef TCP_DEBUG
+/* 三次握手成功,将其 x_sock 放入已连接队列 */
+#ifdef DEBUG
                 printf("收到第三次握手 ack 包\n");
 #endif
-                x_tcp *conn_sock = deQueue(sock->incomplete_conn_queue);
-                conn_sock->state = ESTABLISHED;
+                x_sock *conn_sock = deQueue(sock->incomplete_conn_queue);
+                conn_sock->state  = ESTABLISHED;
                 enQueue(sock->complete_conn_queue, conn_sock);
                 return;
             } else {
-#ifdef TCP_DEBUG
+#ifdef DEBUG
                 printf("收到 ack 包,但 ack_seq 错误\n");
 #endif
             }
@@ -493,12 +490,12 @@ static void packet_handle(x_tcp *sock, char *packet)
         if (pkt_flags == (ACK | SYN)) {
             /* 确认序列号正确 */
             if (pkt_ack_seq == CLIENT_CONN_SEQ + 1) {
-#ifdef TCP_DEBUG
+#ifdef DEBUG
                 printf("收到第二次握手 syn_ack 包\n");
 #endif
                 uint32_t ack_seq = get_tcp_seq(packet + DEFAULT_IP_HEADER_SIZE) + 1;
 /* 发送 ack 包 */
-#ifdef TCP_DEBUG
+#ifdef DEBUG
                 printf("发送第三次握手 ack 包\n");
 #endif
                 x_packet *ack_packet = packet_create(sock, CLIENT_CONN_SEQ + 1, ack_seq, ACK, 1, NULL, 0);
@@ -506,7 +503,7 @@ static void packet_handle(x_tcp *sock, char *packet)
                 sock->state = ESTABLISHED;
                 return;
             } else {
-#ifdef TCP_DEBUG
+#ifdef DEBUG
                 printf("收到 syn_ack 包,但 ack_seq 错误\n");
 #endif
             }
@@ -526,13 +523,13 @@ static void packet_handle(x_tcp *sock, char *packet)
                 uint32_t data_len = get_ip_tot_len(packet) - DEFAULT_HEADER_SIZE;
                 /* 把收到的数据放到接收缓冲区 */
                 if (MAX_TCP_BUF - sock->received_len < (int)data_len) {  // 缓冲区满
-#ifdef TCP_DEBUG
+#ifdef DEBUG
                     printf("接收缓冲区已满 丢弃包\n");
 #endif
                     return;
                 }
                 if (sock->received_buf == NULL) {  // 缓冲区空
-                    sock->received_buf = malloc(data_len);
+                    sock->received_buf = calloc(1,data_len);
                 } else {  // 缓冲区有数据
                     sock->received_buf = realloc(sock->received_buf, sock->received_len + data_len);
                 }
@@ -545,10 +542,10 @@ static void packet_handle(x_tcp *sock, char *packet)
                 uint16_t  adv_window = MAX_TCP_BUF - sock->received_len;   // 窗口大小
                 x_packet *ack_packet = packet_create(sock, seq, ack_seq, ACK, adv_window, NULL, 0);
 
-#ifdef TCP_DEBUG
+#ifdef DEBUG
                 printf("收到seq = %d 的包 发送 ack 包 ack = %d\n", pkt_seq, ack_seq);
 #endif
-
+                
                 packet_send(sock, ack_packet, 0);
                 pthread_mutex_unlock(&(sock->recv_lock));  // 解锁
                 return;
@@ -561,7 +558,7 @@ static void packet_handle(x_tcp *sock, char *packet)
                 x_packet *ack_packet = packet_create(sock, seq, ack_seq, ACK, adv_window, NULL, 0);
                 packet_send(sock, ack_packet, 0);
 
-#ifdef TCP_DEBUG
+#ifdef DEBUG
                 printf("收到seq = %d 的包 [丢弃包] 发送 ack 包 ack = %d\n", pkt_seq, ack_seq);
 #endif
 
@@ -577,7 +574,7 @@ static void packet_handle(x_tcp *sock, char *packet)
                 ;
             /* 收到的ack包在发送窗口外 直接丢弃 */
             if (pkt_ack_seq < sock->window.wnd_send->base) {
-#ifdef TCP_DEBUG
+#ifdef DEBUG
                 printf("收到的 ack 包在发送窗口外 [丢弃包] \n");
 #endif
 
@@ -586,7 +583,7 @@ static void packet_handle(x_tcp *sock, char *packet)
             else if (pkt_ack_seq == sock->window.wnd_send->base) {
                 /* todo */
 
-#ifdef TCP_DEBUG
+#ifdef DEBUG
                 printf("收到 ack 包 ack = %d\n", pkt_ack_seq);
 #endif
 
@@ -609,14 +606,14 @@ static void packet_handle(x_tcp *sock, char *packet)
                     sock->window.wnd_send->cwnd              = sock->window.wnd_send->ssthresh + 3 * MAX_DATA_SIZE;
                     sock->window.wnd_send->congestion_status = FAST_RECOVERY;
 
-#ifdef TCP_DEBUG
+#ifdef DEBUG
                     printf("收到3个重复 ack 开始快速重传\n");
 #endif
                 }
             }
             /* 收到可用于更新的ACK */
             else {
-#ifdef TCP_DEBUG
+#ifdef DEBUG
                 printf("收到 ack 包 ack=%d\n", pkt_ack_seq);
 #endif
 
@@ -657,7 +654,7 @@ static void packet_handle(x_tcp *sock, char *packet)
                     startTimer(sock);
                 }
                 /* 更新发送缓冲区 */
-                char *new_buf = malloc(sock->send_len - free_len);
+                char *new_buf = calloc(1,sock->send_len - free_len);
                 memcpy(new_buf, sock->send_buf + free_len, sock->send_len - free_len);
 
                 free(sock->send_buf);
@@ -666,10 +663,10 @@ static void packet_handle(x_tcp *sock, char *packet)
                 sock->sent_len -= free_len;
                 sock->send_buf = new_buf;
 
-#ifdef TCP_DEBUG
+#ifdef DEBUG
                 printf("发送窗口 base=%d, nextseq=%d\n", sock->window.wnd_send->base, sock->window.wnd_send->nextseq);
 #endif
-#ifdef TCP_DEBUG
+#ifdef DEBUG
                 printf("发送缓冲区 send_len=%d, sent_len=%d\n", sock->send_len, sock->sent_len);
 #endif
             }
@@ -681,23 +678,26 @@ static void packet_handle(x_tcp *sock, char *packet)
 
         /* FIN包 */
         if (pkt_flags == FIN) {
-#ifdef TCP_DEBUG
+#ifdef DEBUG
             printf("收到第一次挥手 fin 包\r\n");
 #endif
             /* 向客户端发送 ack 包 */
             uint32_t  seq        = sock->window.wnd_send->nextseq;
             uint32_t  ack_seq    = pkt_seq + 1;
             x_packet *ack_packet = packet_create(sock, seq, ack_seq, ACK, 1, NULL, 0);
-#ifdef TCP_DEBUG
+#ifdef DEBUG
             printf("发送第二次挥手 ack 包\r\n");
 #endif
+            
             packet_send(sock, ack_packet, 0);
+            
             sock->state = CLOSE_WAIT;
             /* 一段时间后,服务端发送 fin 包 */
             sleep(1);
+            
             seq                  = sock->window.wnd_send->nextseq;
             x_packet *fin_packet = packet_create(sock, seq, 0, FIN, 1, NULL, 0);
-#ifdef TCP_DEBUG
+#ifdef DEBUG
             printf("发送第三次挥手 FIN 包\n");
 #endif
             packet_send(sock, fin_packet, 0);
@@ -709,7 +709,7 @@ static void packet_handle(x_tcp *sock, char *packet)
     /* FIN_WAIT_1 状态, 已发送 fin 包,等待接收 ack 包 */
     if (sock->state == FIN_WAIT_1) {
         if (pkt_flags == ACK) {
-#ifdef TCP_DEBUG
+#ifdef DEBUG
             printf("收到第二次挥手 ack 包\n");
 #endif
             sock->state = FIN_WAIT_2;
@@ -720,13 +720,13 @@ static void packet_handle(x_tcp *sock, char *packet)
     /* FIN_WAIT_2 状态,等待对方发送 fin 包 */
     if (sock->state == FIN_WAIT_2) {
         if (pkt_flags == FIN) {
-#ifdef TCP_DEBUG
+#ifdef DEBUG
             printf("收到第三次挥手 fin 包\n");
 #endif
             uint32_t  seq        = sock->window.wnd_send->nextseq;
             uint32_t  ack_seq    = pkt_seq + 1;
             x_packet *ack_packet = packet_create(sock, seq, ack_seq, ACK, 1, NULL, 0);
-#ifdef TCP_DEBUG
+#ifdef DEBUG
             printf("发送第四次挥手 ack 包\n");
 #endif
             packet_send(sock, ack_packet, 0);
@@ -737,10 +737,10 @@ static void packet_handle(x_tcp *sock, char *packet)
         return;
     }
 
-    /* LAST_ACK 状态, 等待客户端发送 ack 包,完成四次挥手,删除客户端的 x_tcp */
+    /* LAST_ACK 状态, 等待客户端发送 ack 包,完成四次挥手,删除客户端的 x_sock */
     if (sock->state == LAST_ACK) {
         if (pkt_flags == ACK) {
-#ifdef TCP_DEBUG
+#ifdef DEBUG
             printf("收到第四次挥手 ACK 包\n");
 #endif
 
@@ -750,7 +750,9 @@ static void packet_handle(x_tcp *sock, char *packet)
             ehash[hashval]            = 0;
             established_sock[hashval] = NULL;
             sock->state               = CLOSED;
-            free(sock);
+
+            //sock_delete(sock);
+            sock = NULL;
             return;
         }
     }
@@ -759,14 +761,14 @@ static void packet_handle(x_tcp *sock, char *packet)
 /**
  * @brief   后台数据发送线程函数
  *
- * @param   sock    需要数据发送的 x_tcp
+ * @param   sock    需要数据发送的 x_sock
  *
  * @note
  * 将 sock 的数据发送缓冲区的数据发送
  */
-static void *send_thread(x_tcp *sock)
+static void *send_thread(x_sock *sock)
 {
-#ifdef TCP_DEBUG
+#ifdef DEBUG
     printf("启动发送线程\n");
 #endif
     while (1) {
@@ -775,7 +777,7 @@ static void *send_thread(x_tcp *sock)
          * 没有在重传 !is_retransing
          * 发送窗口还有剩余序列号   nextseq < base + win_size
          * */
-        
+
         if (sock->sent_len < sock->send_len &&
             !sock->is_retransing &&
             sock->window.wnd_send->nextseq < sock->window.wnd_send->base + sock->window.wnd_send->window_size) {
@@ -796,11 +798,11 @@ static void *send_thread(x_tcp *sock)
                 while (buf_len - buf_sent_len > MAX_DATA_SIZE &&
                        wnd_next + MAX_DATA_SIZE - wnd_base <= min(cwnd, rwnd)) {
                     uint32_t seq  = wnd_next;
-                    char    *data = malloc(MAX_DATA_SIZE);
+                    char    *data = calloc(1,MAX_DATA_SIZE);
                     memcpy(data, sock->send_buf + buf_sent_len, MAX_DATA_SIZE);
                     x_packet *pkt = packet_create(sock, seq, 0, 0, 1, data, MAX_DATA_SIZE);
 
-#ifdef TCP_DEBUG
+#ifdef DEBUG
                     printf("发送 %d 字节大小的包 seq = %d\n", MAX_DATA_SIZE, seq);
 #endif
 
@@ -826,11 +828,11 @@ static void *send_thread(x_tcp *sock)
                 uint32_t len = buf_len - buf_sent_len;  // 数据长度
                 if (wnd_next + len - wnd_base <= min(cwnd, rwnd)) {
                     /* 发送数据 */
-                    char *data = malloc(len);
+                    char *data = calloc(1,len);
                     memcpy(data, sock->send_buf + buf_sent_len, len);              // 复制数据
                     x_packet *pkt = packet_create(sock, seq, 0, 0, 1, data, len);  // 创建包
 
-#ifdef TCP_DEBUG
+#ifdef DEBUG
                     printf("发送 %d 字节大小的包 seq = %d\n", len, seq);
 #endif
 
@@ -864,7 +866,7 @@ static void *send_thread(x_tcp *sock)
                        wnd_next + MAX_DATA_SIZE - wnd_base <= min(cwnd, rwnd)) {
                     /* 发送数据 */
                     uint32_t seq  = wnd_next;
-                    char    *data = malloc(MAX_DATA_SIZE);
+                    char    *data = calloc(1,MAX_DATA_SIZE);
                     memcpy(data, sock->send_buf + buf_sent_len, MAX_DATA_SIZE);
                     x_packet *pkt = packet_create(sock, seq, 0, 0, 1, data, MAX_DATA_SIZE);
                     packet_send(sock, pkt, MAX_DATA_SIZE);
@@ -875,7 +877,7 @@ static void *send_thread(x_tcp *sock)
                     wnd_next += MAX_DATA_SIZE;
                     buf_sent_len += MAX_DATA_SIZE;
 
-#ifdef TCP_DEBUG
+#ifdef DEBUG
                     printf("发送 %d 字节大小的包 seq = %d\n", MAX_DATA_SIZE, seq);
 #endif
                 }
@@ -883,12 +885,12 @@ static void *send_thread(x_tcp *sock)
                 uint32_t seq = wnd_next;
                 uint32_t len = wnd_base + wnd_size - wnd_next;
                 if (wnd_next + len - wnd_base <= min(cwnd, rwnd)) {
-                    char *data = malloc(len);
+                    char *data = calloc(1,len);
                     memcpy(data, sock->send_buf + buf_sent_len, len);
                     x_packet *pkt = packet_create(sock, seq, 0, 0, 1, data, len);
                     packet_send(sock, pkt, len);
 
-#ifdef TCP_DEBUG
+#ifdef DEBUG
                     printf("发送 %d 字节大小的包 seq = %d\n", len, seq);
 #endif
 
@@ -912,14 +914,14 @@ static void *send_thread(x_tcp *sock)
 /**
  * @brief   后台数据重传线程函数
  *
- * @param   sock    需要重传处理的 x_tcp
+ * @param   sock    需要重传处理的 x_sock
  *
  * @note
  * 通过重传标志判断是否需要重传
  */
-static void *retran_thread(x_tcp *sock)
+static void *retran_thread(x_sock *sock)
 {
-#ifdef TCP_DEBUG
+#ifdef DEBUG
     printf("启动数据重传线程\n");
 #endif
 
@@ -929,7 +931,7 @@ static void *retran_thread(x_tcp *sock)
             while (pthread_mutex_lock(&(sock->send_lock)) != 0)
                 ;  // 给发送缓冲区加锁
 
-#ifdef TCP_DEBUG
+#ifdef DEBUG
             printf("进入重传函数\n");
 #endif
 
@@ -965,7 +967,8 @@ static void *retran_thread(x_tcp *sock)
                     ehash[hashval]            = 0;
                     established_sock[hashval] = NULL;
                     sock->state               = CLOSED;
-                    free(sock);
+                    sock_delete(sock);
+                    sock = NULL;
                     pthread_exit(NULL);
                 } else {
                     printf("重传同一条消息\n");
@@ -979,17 +982,17 @@ static void *retran_thread(x_tcp *sock)
                 sock->last_retrans_size = 1;
             }
 
-#ifdef TCP_DEBUG
+#ifdef DEBUG
             printf("发送窗口 base=%d, nextseq=%d\n", sock->window.wnd_send->base, sock->window.wnd_send->nextseq);
 #endif
-#ifdef TCP_DEBUG
+#ifdef DEBUG
             printf("发送缓冲区 send_len=%d, sent_len=%d\n", sock->send_len, sock->sent_len);
 #endif
 
             /* 需发送的数据大于 MAX_DATA_SIZE */
             while (wnd_retrans_size > MAX_DATA_SIZE) {
                 uint32_t seq  = wnd_base + retransed_size;
-                char    *data = malloc(MAX_DATA_SIZE);
+                char    *data = calloc(1,MAX_DATA_SIZE);
                 memcpy(data, sock->send_buf + retransed_size, MAX_DATA_SIZE);
                 x_packet *ret_packet = packet_create(sock, seq, 0, 0, 1, data, MAX_DATA_SIZE);
                 packet_send(sock, ret_packet, 0);
@@ -999,7 +1002,7 @@ static void *retran_thread(x_tcp *sock)
                 retransed_size += MAX_DATA_SIZE;
                 wnd_retrans_size -= MAX_DATA_SIZE;
 
-#ifdef TCP_DEBUG
+#ifdef DEBUG
                 printf("重传 %d 大小的包 seq = %d\n", MAX_DATA_SIZE, seq);
 #endif
             }
@@ -1008,7 +1011,7 @@ static void *retran_thread(x_tcp *sock)
             uint32_t len = wnd_retrans_size;
 
             if (len != 0) {
-                char *data = malloc(len);
+                char *data = calloc(1,len);
                 memcpy(data, sock->send_buf + retransed_size, len);
                 x_packet *ret_packet = packet_create(sock, seq, 0, 0, 1, data, MAX_DATA_SIZE);
                 packet_send(sock, ret_packet, 0);
@@ -1019,7 +1022,7 @@ static void *retran_thread(x_tcp *sock)
                 retransed_size += len;
                 wnd_retrans_size -= len;
 
-#ifdef TCP_DEBUG
+#ifdef DEBUG
                 printf("重传 %d 大小的包<%s> seq = %d\n", len, data, seq);
 #endif
             }
@@ -1035,7 +1038,7 @@ static void *retran_thread(x_tcp *sock)
 /**
  * @brief   创建 ip_tcp 包
  *
- * @param   sock        需要进行通信的 x_tcp,主要读取其中的地址属性
+ * @param   sock        需要进行通信的 x_sock,主要读取其中的地址属性
  * @param   seq         tcp 头部的序列号
  * @param   ack_seq     tcp 头部的确认序列号
  * @param   flags       tcp 头部的标志位
@@ -1047,9 +1050,9 @@ static void *retran_thread(x_tcp *sock)
  *
  * @note    填充 ip tcp 头部信息
  */
-static x_packet *packet_create(x_tcp *sock, uint32_t seq, uint32_t ack_seq, uint16_t flags, uint16_t window_size, char *data, int len)
+static x_packet *packet_create(x_sock *sock, uint32_t seq, uint32_t ack_seq, uint16_t flags, uint16_t window_size, char *data, int len)
 {
-    x_packet *packet = (x_packet *)malloc(sizeof(x_packet));
+    x_packet *packet = (x_packet *)calloc(sizeof(x_packet),1);
 
     packet->ip_header.ihl      = 5;                            // IP头部长度，单位为32位字
     packet->ip_header.version  = 4;                            // IPv4
@@ -1084,7 +1087,7 @@ static x_packet *packet_create(x_tcp *sock, uint32_t seq, uint32_t ack_seq, uint
 /**
  * @brief   发送 ip_tcp 包
  *
- * @param   sock    需要进行发送的 x_tcp
+ * @param   sock    需要进行发送的 x_sock
  * @param   packet  需要发送的包
  * @param   len     需要发送的包中,数据的长度
  *
@@ -1095,10 +1098,10 @@ static x_packet *packet_create(x_tcp *sock, uint32_t seq, uint32_t ack_seq, uint
  * 2. 通过 sendto 函数发送,目标地址就在包中
  * 3. 释放包的内存
  */
-static int packet_send(x_tcp *sock, x_packet *packet, int len)
+static int packet_send(x_sock *sock, x_packet *packet, int len)
 {
     /* 序列化 */
-    char *buf = (char *)malloc(DEFAULT_HEADER_SIZE + len);
+    char *buf = (char *)calloc(1,DEFAULT_HEADER_SIZE + len);
     memcpy(buf, packet, DEFAULT_HEADER_SIZE);
     if (len > 0) {
         memcpy(buf + DEFAULT_HEADER_SIZE, packet->data, len);
@@ -1114,7 +1117,9 @@ static int packet_send(x_tcp *sock, x_packet *packet, int len)
     /* 释放 */
     memset(packet, 0, sizeof(x_packet));
     free(packet);
+    packet = NULL;
     free(buf);
+    buf = NULL;
     return ret;
 }
 
@@ -1127,7 +1132,7 @@ static int packet_send(x_tcp *sock, x_packet *packet, int len)
  */
 static void timeout_handler(union sigval sv)
 {
-    x_tcp *sock = (x_tcp *)sv.sival_ptr;
+    x_sock *sock = (x_sock *)sv.sival_ptr;
     printf("超时!!!\n");
     sock->is_retransing   = true;
     sock->time.is_timeout = true;
@@ -1136,9 +1141,9 @@ static void timeout_handler(union sigval sv)
 /**
  * @brief   设置超时定时器
  *
- * @param   sock    需要设置定时器的 x_tcp
+ * @param   sock    需要设置定时器的 x_sock
  */
-static void startTimer(x_tcp *sock)
+static void startTimer(x_sock *sock)
 {
     /* 启动定时器*/
     sock->time.its.it_value.tv_sec     = 0;
@@ -1154,7 +1159,7 @@ static void startTimer(x_tcp *sock)
 /**
  * @brief   停止定时器
  */
-static void stopTimer(x_tcp *sock)
+static void stopTimer(x_sock *sock)
 {
     sock->time.its.it_value.tv_sec     = 0;
     sock->time.its.it_value.tv_nsec    = 0;
@@ -1165,13 +1170,13 @@ static void stopTimer(x_tcp *sock)
         exit(1);
     }
 
-#ifdef TCP_DEBUG
+#ifdef DEBUG
     printf("停止定时器\n");
 #endif
 }
 
 /**
- * @brief 往返时间评估,并设置 x_tcp RTT
+ * @brief 往返时间评估,并设置 x_sock RTT
  *
  * @param   sock    需要评估的 sock
  *
@@ -1183,7 +1188,7 @@ static void stopTimer(x_tcp *sock)
  * 3. TimeoutInterval = EstimatedRTT + 4 * DevRTT
  *
  */
-static void TimeoutInterval(x_tcp *sock)
+static void TimeoutInterval(x_sock *sock)
 {
     struct timeval send_time = sock->window.wnd_send->send_time;
     struct timeval local_time;
@@ -1191,7 +1196,7 @@ static void TimeoutInterval(x_tcp *sock)
 
     long sampleRTT = (local_time.tv_sec - send_time.tv_sec) * 1000000 + (local_time.tv_usec - send_time.tv_usec);
 
-#ifdef TCP_DEBUG
+#ifdef DEBUG
     printf("sampleRTT = %ld \n", sampleRTT);
 #endif
 
@@ -1209,19 +1214,19 @@ static void TimeoutInterval(x_tcp *sock)
 
     sock->window.wnd_send->timeout.it_value.tv_usec = sock->window.wnd_send->estmated_rtt + 4 * sock->window.wnd_send->dev_rtt;
 
-#ifdef TCP_DEBUG
+#ifdef DEBUG
     printf("------------------------------- TimeoutInterval -------------------------------\n");
 #endif
-#ifdef TCP_DEBUG
+#ifdef DEBUG
     printf("发送pkt 获取的秒时间 = %ld  获取的微秒时间 = %ld\n", send_time.tv_sec, send_time.tv_usec);
 #endif
-#ifdef TCP_DEBUG
+#ifdef DEBUG
     printf("收到ack 获取的秒时间 = %ld  获取的微秒时间 = %ld\n", local_time.tv_sec, local_time.tv_usec);
 #endif
-#ifdef TCP_DEBUG
+#ifdef DEBUG
     printf("TimeOut = %ld \n", sock->window.wnd_send->timeout.it_value.tv_usec);
 #endif
-#ifdef TCP_DEBUG
+#ifdef DEBUG
     printf("-------------------------------------------------------------------------------\n");
 #endif
 }
@@ -1239,24 +1244,42 @@ static void TimeoutInterval(x_tcp *sock)
  */
 static x_sock_queue *createQueue()
 {
-    x_sock_queue *q = (x_sock_queue *)malloc(sizeof(x_sock_queue));
+    x_sock_queue *q = (x_sock_queue *)calloc(1,sizeof(x_sock_queue));
     q->front = q->rear = NULL;
     q->queue_size      = 0;
     return q;
 }
 
 /**
+ * @brief   删除一个队列
+ *
+ * @param   queue 队列指针
+ *
+ * @return  无
+ *
+ * @note    将所有节点出列
+ */
+static void delete_queue(x_sock_queue *queue)
+{
+    int size = queue->queue_size;
+    while (size--) {
+        deQueue(queue);
+    }
+    memset(queue, 0, sizeof(x_sock_queue));
+}
+
+/**
  * @brief   创建一个队列结点
  *
- * @param   sock    需要变成节点的 x_tcp
+ * @param   sock    需要变成节点的 x_sock
  *
  * @return  节点指针
  *
  * @note    无
  */
-static x_sock_node *newNode(x_tcp *sock)
+static x_sock_node *newNode(x_sock *sock)
 {
-    x_sock_node *temp = (x_sock_node *)malloc(sizeof(x_sock_node));
+    x_sock_node *temp = (x_sock_node *)calloc(1,sizeof(x_sock_node));
     temp->sock        = sock;
     temp->next        = NULL;
     return temp;
@@ -1266,13 +1289,13 @@ static x_sock_node *newNode(x_tcp *sock)
  * @brief   入队操作
  *
  * @param   q       需要入队的队列
- * @param   sock    需要入队的 x_tcp
+ * @param   sock    需要入队的 x_sock
  *
  * @return  无
  *
  * @note    无
  */
-static void enQueue(x_sock_queue *q, x_tcp *sock)
+static void enQueue(x_sock_queue *q, x_sock *sock)
 {
     struct x_sock_node *temp = newNode(sock);
 
@@ -1293,17 +1316,17 @@ static void enQueue(x_sock_queue *q, x_tcp *sock)
  *
  * @param   q       需要出队的队列
  *
- * @return  x_tcp   出队的 x_tcp
+ * @return  x_sock   出队的 x_sock
  *
  * @note    无
  */
-static x_tcp *deQueue(x_sock_queue *q)
+static x_sock *deQueue(x_sock_queue *q)
 {
     if (q->front == NULL)
         return NULL;
 
     x_sock_node *temp = q->front;
-    x_tcp       *sock = temp->sock;
+    x_sock      *sock = temp->sock;
     q->front          = q->front->next;
     q->queue_size--;
     if (q->front == NULL)
@@ -1316,10 +1339,10 @@ static x_tcp *deQueue(x_sock_queue *q)
 }
 
 /**
- * @brief   计算 x_tcp 的 hash 值
+ * @brief   计算 x_sock 的 hash 值
  *
- * @param   remote_ip   x_tcp 中的 remote_ip 远程 ip
- * @param   remote_port x_tcp 中的 remote_ip 远程 端口
+ * @param   remote_ip   x_sock 中的 remote_ip 远程 ip
+ * @param   remote_port x_sock 中的 remote_ip 远程 端口
  *
  * @return  hash 值
  *
@@ -1332,20 +1355,19 @@ static int cal_hash(uint32_t remote_ip, uint16_t remote_port)
 }
 
 /**
- * @brief   创建一个 x_tcp 结构体
+ * @brief   创建一个 x_sock 结构体
  *
  * @param   无
  *
- * @return  初始化的 x_tcp 结构体指针
+ * @return  初始化的 x_sock 结构体指针
  *
- * @note    将 x_tcp 结构体中的属性都赋予初始默认值
+ * @note    将 x_sock 结构体中的属性都赋予初始默认值
  *
  */
-static x_tcp *tcp_create()
+static x_sock *sock_create()
 {
     /* 初始化结构体 */
-    x_tcp *sock = (x_tcp *)malloc(sizeof(x_tcp));
-    memset(sock, 0, sizeof(x_tcp));
+    x_sock *sock = (x_sock *)calloc(1,sizeof(x_sock));
     sock->state     = CLOSED;
     sock->socket_fd = -1;
 
@@ -1362,7 +1384,7 @@ static x_tcp *tcp_create()
     }
 
     /* 初始化发送窗口 */
-    sock->window.wnd_send              = malloc(sizeof(x_send_window));
+    sock->window.wnd_send              = calloc(1,sizeof(x_send_window));
     sock->window.wnd_send->base        = 1;
     sock->window.wnd_send->nextseq     = 1;
     sock->window.wnd_send->window_size = TCP_SENDWN_SIZE;
@@ -1381,7 +1403,7 @@ static x_tcp *tcp_create()
     sock->window.wnd_send->is_estimating_rtt           = false;
 
     // 初始化接收窗口
-    sock->window.wnd_recv             = malloc(sizeof(x_send_window));
+    sock->window.wnd_recv             = calloc(1,sizeof(x_send_window));
     sock->window.wnd_recv->expect_seq = 1;
 
     /* 初始化队列 */
@@ -1405,4 +1427,35 @@ static x_tcp *tcp_create()
     sock->time.its.it_value.tv_nsec    = 800000000;
     sock->time.its.it_interval.tv_sec  = 0;
     sock->time.its.it_interval.tv_nsec = 0;
+}
+
+/**
+ * @brief 删除 sock
+ * @param sock 需要删除的 sock
+ */
+static void sock_delete(x_sock *sock)
+{
+    memset(sock->window.wnd_recv, 0, sizeof(x_recv_window));
+    sock->window.wnd_recv = NULL;
+
+    memset(sock->window.wnd_send, 0, sizeof(x_send_window));
+    sock->window.wnd_send = NULL;
+
+    if (sock->send_buf != NULL) {
+        memset(sock->send_buf, 0, sizeof(sock->send_buf));
+        sock->send_buf = NULL;
+    }
+
+    if (sock->send_buf != NULL) {
+        memset(sock->received_buf, 0, sizeof(sock->received_buf));
+        sock->received_buf = NULL;
+    }
+
+    delete_queue(sock->incomplete_conn_queue);
+    sock->incomplete_conn_queue = NULL;
+    delete_queue(sock->complete_conn_queue);
+    sock->complete_conn_queue = NULL;
+
+    memset(sock, 0, sizeof(x_sock));
+    free(sock);
 }

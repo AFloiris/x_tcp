@@ -10,7 +10,7 @@
 #define SERVER_IP "127.0.0.1"
 #define SERVER_PORT 1234
 
-void *read_thread(x_tcp *sock);
+void *read_thread(x_sock *sock);
 
 int main(int argc, char *argv[])
 {
@@ -28,7 +28,7 @@ int main(int argc, char *argv[])
         return -1;
     }
     /* 创建 sock */
-    x_tcp *sock = x_socket();
+    x_sock *sock = x_socket();
     /* 连接服务器 */
     if (x_connect(sock, ip, port, SERVER_IP, SERVER_PORT)) {
         printf("连接服务器错误\n");
@@ -38,7 +38,6 @@ int main(int argc, char *argv[])
     pthread_t recv_pt;
     pthread_create(&recv_pt, NULL, (void *)read_thread, sock);
     char buf[1024];
-    int  len;
     printf("请输入你要发送的消息:\n");
     while (1) {
         memset(buf, 0, sizeof(buf));
@@ -67,7 +66,7 @@ int main(int argc, char *argv[])
 /**
  * @brief   读取数据线程
  *
- * @param   sock    已连接的 x_tcp
+ * @param   sock    已连接的 x_sock
  *
  * @return  无
  *
@@ -76,7 +75,7 @@ int main(int argc, char *argv[])
  * 判断是否为心跳数据
  * 将所有数据打印
  */
-void *read_thread(x_tcp *sock)
+void *read_thread(x_sock *sock)
 {
     char buf[1024];
     int  len;
